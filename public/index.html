@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nugon SOS - Alertas de Emergencia</title>
+
+  <meta name="description"
+    content="Recepción de alertas de auxilio y ubicación en tiempo real para familiares en situaciones de emergencia o convulsión.">
+  <meta name="theme-color" content="#DC2626">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Nugon SOS - Alertas de Emergencia">
+  <meta property="og:description" content="Sistema de alerta inmediata y localización GPS para emergencias familiares.">
+  <meta property="og:type" content="website">
+
+  <!-- Favicon & PWA Manifest -->
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <!-- Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-container">
+      <a href="./" class="brand">
+        <img src="logo.png" alt="Nugon SOS Logo" class="brand-logo">
+        <div class="brand-title">Nugon <span>SOS</span></div>
+      </a>
+      <div id="statusPill" class="status-pill">
+        <span class="status-dot"></span>
+        <span id="statusText">Desconectado</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="container">
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs-nav" aria-label="Secciones principales">
+      <button class="tab-btn active" data-tab="tab-suscribir">
+        <span>🔔</span> Activar Alerta
+      </button>
+      <button class="tab-btn" data-tab="tab-historial">
+        <span>📋</span> Historial
+      </button>
+      <button class="tab-btn" data-tab="tab-instrucciones">
+        <span>📖</span> Guía y Configuración
+      </button>
+    </nav>
+
+    <!-- TAB 1: SUSCRIPCIÓN Y PRUEBAS -->
+    <section id="tab-suscribir" class="tab-panel active">
+
+      <!-- Card: Suscripción al Emisor -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span>🛡️</span> Monitorear un Familiar</h2>
+          <p class="card-desc">Ingresa el <strong>Identificador de Emisor (Sender ID)</strong> que configuraste en la
+            aplicación Android de tu familiar.</p>
+        </div>
+
+        <form id="subscribeForm">
+          <div class="form-group">
+            <label for="senderIdInput" class="form-label">Identificador del Emisor (Sender ID):</label>
+            <input type="text" id="senderIdInput" class="form-control" placeholder="Ej: Prima Maria" required
+              autocomplete="off">
+            <p class="form-hint">Debe coincidir exactamente con el nombre o código ingresado en la app Android.</p>
+          </div>
+
+          <div class="btn-group">
+            <button type="submit" id="btnSubscribe" class="btn btn-primary btn-lg">
+              <span>🔔</span> Activar Notificaciones en este Celular
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- State Box when Subscribed -->
+      <div id="activeBanner" class="active-banner" style="display: none;">
+        <div class="active-banner-info">
+          <div class="active-banner-icon">✅</div>
+          <div>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: #34D399;">Alertas Activas</h3>
+            <p style="font-size: 0.875rem; color: #D1D5DB;">Recibirás notificaciones inmediatas para <strong
+                id="activeSenderLabel">--</strong></p>
+          </div>
+        </div>
+        <button id="btnUnsubscribe" class="btn btn-outline-danger" style="width: auto; padding: 0.5rem 1rem;">
+          Desconectar
+        </button>
+      </div>
+
+      <!-- Card: Probador de Alertas y Sonido -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span>🔊</span> Probar Sirena y Notificación</h2>
+          <p class="card-desc">Comprueba que la sirena de audio y la vibración funcionen correctamente en tu celular.
+          </p>
+        </div>
+
+        <div class="btn-group" style="margin-bottom: 0.75rem;">
+          <button id="btnTestSound" class="btn btn-secondary">
+            <span>🔊</span> Probar Sonido de Sirena
+          </button>
+          <button id="btnTestPush" class="btn btn-secondary">
+            <span>📲</span> Enviar Notificación de Prueba
+          </button>
+        </div>
+        <p class="form-hint">Asegúrate de tener el volumen del celular alto y los permisos de notificaciones concedidos.
+        </p>
+      </div>
+
+    </section>
+
+    <!-- TAB 2: HISTORIAL DE ALERTAS -->
+    <section id="tab-historial" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span>📋</span> Registro Reciente de Emergencias</h2>
+          <p class="card-desc">Historial de las últimas alertas enviadas por tu familiar.</p>
+        </div>
+
+        <div id="historyList" class="history-list">
+          <p style="text-align: center; color: var(--text-muted); padding: 2rem;">Cargando historial...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: GUÍA E INSTRUCCIONES -->
+    <section id="tab-instrucciones" class="tab-panel">
+
+      <!-- Configuración con Android App -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span>📱</span> Cómo conectar con la App Android (Nugon SOS)</h2>
+          <p class="card-desc">Sigue estos pasos en el celular de la persona que necesita emitir la alerta.</p>
+        </div>
+
+        <div class="step-list">
+          <div class="step-item">
+            <div class="step-number">1</div>
+            <div class="step-content">
+              <div class="step-title">Instala la App Android</div>
+              <div class="step-text">Abre la app <strong>Nugon SOS</strong> en el teléfono Android del emisor.</div>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <div class="step-number">2</div>
+            <div class="step-content">
+              <div class="step-title">Configura el URL del Servidor y Sender ID</div>
+              <div class="step-text">
+                En la pantalla de ajustes de la app Android, ingresa:
+                <br>• <strong>URL Servidor:</strong> <span id="serverUrlGuide"
+                  class="code-badge">https://prisma.com.py/nugon/api/alerta</span>
+                <br>• <strong>Tu Identificador / Sender ID:</strong> <span class="code-badge">Ej: Prima Maria</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <div class="step-number">3</div>
+            <div class="step-content">
+              <div class="step-title">Concede Permiso de Accesibilidad</div>
+              <div class="step-text">Otorga los permisos requeridos para capturar la presión sostenida del botón de
+                volumen por 1.5 segundos.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Guía de Instalación PWA (iOS / Android) -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><span>🍏</span> Instalación en iPhone / iPad (iOS)</h2>
+          <p class="card-desc">Apple requiere instalar la aplicación en la Pantalla de Inicio para notificaciones Push.
+          </p>
+        </div>
+
+        <div class="step-list">
+          <div class="step-item">
+            <div class="step-number">1</div>
+            <div class="step-content">
+              <div class="step-title">Abre esta página en Safari</div>
+              <div class="step-text">Asegúrate de estar usando el navegador Safari en tu iPhone.</div>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <div class="step-number">2</div>
+            <div class="step-content">
+              <div class="step-title">Toca el botón Compartir</div>
+              <div class="step-text">Presiona el icono de <strong>Compartir</strong> (un cuadrado con una flecha hacia
+                arriba) en la barra inferior de Safari.</div>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <div class="step-number">3</div>
+            <div class="step-content">
+              <div class="step-title">Selecciona "Agregar a inicio"</div>
+              <div class="step-text">Selecciona <strong>Agregar a la pantalla de inicio</strong> y presiona
+                <strong>Agregar</strong>. Luego abre Nugon desde tu pantalla principal y activa las notificaciones.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- EMERGENCY ALERT OVERLAY MODAL -->
+  <div id="alertOverlay" class="alert-overlay hidden">
+    <div class="alert-modal">
+      <div class="alert-siren-icon">🚨</div>
+      <h2 id="alertSenderTitle" class="alert-sender-title">¡ALERTA DE EMERGENCIA!</h2>
+      <p id="alertBodyText" class="alert-body-text">Cargando detalles de la ubicación...</p>
+      <div id="alertTimeText" class="alert-time">Hace unos instantes</div>
+
+      <div class="btn-group" style="flex-direction: column;">
+        <a id="btnOpenMaps" href="#" target="_blank" class="btn btn-primary btn-lg" style="font-size: 1.15rem;">
+          <span>🗺️</span> Abrir Ubicación en Google Maps
+        </a>
+        <button id="btnSilenceAlarm" class="btn btn-secondary">
+          <span>🔕</span> Silenciar Sirena
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>Nugon SOS &copy; 2026 - Aplicación Open Source bajo Licencia MIT</p>
+    <p style="margin-top: 0.25rem;">Diseñado para emergencias familiares.</p>
+  </footer>
+
+  <!-- App Script -->
+  <script src="app.js"></script>
+</body>
+
+</html>

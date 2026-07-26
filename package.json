@@ -1,0 +1,25 @@
+{
+  "name": "nugon-pwa",
+  "version": "1.0.0",
+  "description": "PWA y Servidor de Alertas de Emergencia Web Push para Nugon SOS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "pwa",
+    "emergency",
+    "web-push",
+    "sos",
+    "nugon"
+  ],
+  "author": "Nugon Open Source Project",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "web-push": "^3.6.7"
+  }
+}

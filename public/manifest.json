@@ -1,0 +1,20 @@
+{
+  "id": "/nugon/",
+  "name": "Nugon SOS - Alertas de Emergencia",
+  "short_name": "Nugon Server",
+  "description": "Recepción de alertas y ubicación en tiempo real para familiares en situaciones de emergencia y convulsiones.",
+  "start_url": "/nugon/",
+  "scope": "/nugon/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0F172A",
+  "theme_color": "#DC2626",
+  "icons": [
+    {
+      "src": "logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
