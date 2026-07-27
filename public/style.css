@@ -94,18 +94,6 @@ body {
   border: 1px solid var(--border-color);
 }
 
-.brand-icon {
-  width: 40px;
-  height: 40px;
-  background: linear-gradient(135deg, #EF4444, #B91C1C);
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.3rem;
-  box-shadow: 0 4px 12px var(--accent-red-glow);
-}
-
 .brand-title {
   font-family: var(--font-heading);
   font-weight: 800;
@@ -255,6 +243,81 @@ body {
   color: var(--text-secondary);
   font-size: 0.9rem;
   margin-top: 0.25rem;
+}
+
+/* Multi-Monitored Relatives Grid & Cards */
+.monitored-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.monitored-card {
+  background: rgba(17, 24, 39, 0.8);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 1rem;
+  transition: var(--transition);
+}
+
+.monitored-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(31, 41, 55, 0.9);
+  transform: translateY(-2px);
+}
+
+.monitored-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.monitored-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.monitored-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.monitored-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitored-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #34D399;
+  margin-top: 0.15rem;
+}
+
+.monitored-card-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.monitored-card-actions .btn {
+  flex: 1;
 }
 
 /* Forms & Inputs */
@@ -601,5 +664,8 @@ footer a {
   }
   .alert-modal {
     padding: 1.5rem;
+  }
+  .monitored-grid {
+    grid-template-columns: 1fr;
   }
 }

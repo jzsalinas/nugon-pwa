@@ -1,12 +1,11 @@
 // --------------------------------------------------------------------------
-// NUGON SOS PWA - App Logic & Web Push Controller
-// Aislamiento estricto de Scope PWA en /nugon/
+// NUGON SOS PWA - Multi-Family Monitoring & Push Controller
+// Scope acotado a /nugon/
 // --------------------------------------------------------------------------
 
 (function () {
   'use strict';
 
-  // Forzar /nugon como base path de la PWA para evitar sobreescribir la PWA raíz de Prisma
   const basePath = '/nugon';
   const apiBase = `${basePath}/api`;
 
@@ -16,12 +15,10 @@
   const subscribeForm = document.getElementById('subscribeForm');
   const senderIdInput = document.getElementById('senderIdInput');
   const btnSubscribe = document.getElementById('btnSubscribe');
-  const activeBanner = document.getElementById('activeBanner');
-  const activeSenderLabel = document.getElementById('activeSenderLabel');
-  const btnUnsubscribe = document.getElementById('btnUnsubscribe');
+  const monitoredList = document.getElementById('monitoredList');
   const btnTestSound = document.getElementById('btnTestSound');
-  const btnTestPush = document.getElementById('btnTestPush');
   const historyList = document.getElementById('historyList');
+  const historyFilterSelect = document.getElementById('historyFilterSelect');
   const serverUrlGuide = document.getElementById('serverUrlGuide');
   
   // Overlay de Emergencia
@@ -37,43 +34,74 @@
   let sirenOscillator1 = null;
   let sirenTimer = null;
 
-  // Actualizar Guía URL
   if (serverUrlGuide) {
     serverUrlGuide.textContent = `${window.location.origin}${apiBase}/alerta`;
   }
 
   // --------------------------------------------------------------------------
-  // 1. Inicialización de Service Worker con Scope /nugon/
+  // 1. Gestión de Almacenamiento Local (Multi-Familiar)
+  // --------------------------------------------------------------------------
+  function getMonitoredSenders() {
+    // Migración transparente si venía de versión previa con 1 solo sender
+    const legacy = localStorage.getItem('nugon_active_sender');
+    if (legacy && !localStorage.getItem('nugon_monitored_senders')) {
+      const initial = [legacy.trim()];
+      localStorage.setItem('nugon_monitored_senders', JSON.stringify(initial));
+      localStorage.removeItem('nugon_active_sender');
+      return initial;
+    }
+
+    try {
+      const stored = localStorage.getItem('nugon_monitored_senders');
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveMonitoredSenders(list) {
+    localStorage.setItem('nugon_monitored_senders', JSON.stringify(list));
+    updateStatusPill();
+    renderMonitoredList();
+    renderHistoryFilterOptions();
+  }
+
+  function updateStatusPill() {
+    const list = getMonitoredSenders();
+    if (list.length > 0) {
+      statusPill.classList.add('active');
+      statusText.textContent = `Monitoreando ${list.length} familiar${list.length > 1 ? 'es' : ''}`;
+    } else {
+      statusPill.classList.remove('active');
+      statusText.textContent = 'Desconectado';
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. Inicialización PWA & Service Worker
   // --------------------------------------------------------------------------
   async function initPWA() {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      updateStatus(false, 'Navegador sin soporte Push');
+      updateStatusPill();
+      statusText.textContent = 'Sin soporte Push';
       return;
     }
 
     try {
-      // Registrar el Service Worker explícitamente acotado al scope /nugon/
       swRegistration = await navigator.serviceWorker.register(`${basePath}/sw.js`, {
         scope: `${basePath}/`
       });
       console.log('[App] Service Worker Nugon SOS registrado con scope:', swRegistration.scope);
 
-      // Escuchar mensajes del Service Worker
       navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
 
-      // Verificar suscripción guardada
-      const savedSender = localStorage.getItem('nugon_active_sender');
-      if (savedSender) {
-        senderIdInput.value = savedSender;
-        checkExistingSubscription(savedSender);
-      } else {
-        updateStatus(false, 'No registrado');
-      }
-
-      // Cargar historial
+      // Renderizar UI inicial
+      updateStatusPill();
+      renderMonitoredList();
+      renderHistoryFilterOptions();
       loadAlertHistory();
 
-      // Comprobar parámetros de URL (si se abrió por clic en notificación)
+      // Comprobar si se abrió por clic en notificación
       const urlParams = new URLSearchParams(window.location.search);
       const alertParam = urlParams.get('alert');
       if (alertParam) {
@@ -87,74 +115,99 @@
 
     } catch (err) {
       console.error('[App] Error al registrar Service Worker:', err);
-      updateStatus(false, 'Error de registro SW');
+      updateStatusPill();
+      statusText.textContent = 'Error de registro';
     }
   }
 
   // --------------------------------------------------------------------------
-  // 2. Manejo de Estado de Suscripción
+  // 3. Renderizar Lista de Familiares Monitoreados
   // --------------------------------------------------------------------------
-  async function checkExistingSubscription(senderId) {
-    if (!swRegistration) return;
-    const sub = await swRegistration.pushManager.getSubscription();
-    if (sub) {
-      showSubscribedUI(senderId);
-      updateStatus(true, `Conectado: ${senderId}`);
-    } else {
-      showUnsubscribedUI();
-      updateStatus(false, 'Desconectado');
+  function renderMonitoredList() {
+    if (!monitoredList) return;
+
+    const list = getMonitoredSenders();
+
+    if (list.length === 0) {
+      monitoredList.innerHTML = `
+        <div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: var(--text-muted); background: rgba(17, 24, 39, 0.4); border-radius: var(--radius-md); border: 1px dashed var(--border-color);">
+          <div style="font-size: 2rem; margin-bottom: 0.5rem;">👤</div>
+          <p style="font-weight: 600; color: var(--text-secondary);">No estás monitoreando a ningún familiar aún.</p>
+          <p style="font-size: 0.85rem;">Agrega el nombre de tu familiar abajo para recibir sus notificaciones de auxilio.</p>
+        </div>
+      `;
+      return;
     }
-  }
 
-  function updateStatus(active, text) {
-    if (active) {
-      statusPill.classList.add('active');
-    } else {
-      statusPill.classList.remove('active');
-    }
-    statusText.textContent = text;
-  }
+    monitoredList.innerHTML = list.map(sender => `
+      <div class="monitored-card">
+        <div class="monitored-card-header">
+          <div class="monitored-avatar">👤</div>
+          <div class="monitored-details">
+            <h3 class="monitored-name">${escapeHtml(sender)}</h3>
+            <span class="monitored-badge">🟢 Activo</span>
+          </div>
+        </div>
+        <div class="monitored-card-actions">
+          <button class="btn btn-secondary btn-test-sender" data-sender="${escapeHtml(sender)}" style="padding: 0.45rem 0.75rem; font-size: 0.825rem;">
+            <span>📲</span> Probar Alerta
+          </button>
+          <button class="btn btn-outline-danger btn-remove-sender" data-sender="${escapeHtml(sender)}" style="padding: 0.45rem 0.75rem; font-size: 0.825rem;">
+            <span>🗑️</span> Quitar
+          </button>
+        </div>
+      </div>
+    `).join('');
 
-  function showSubscribedUI(senderId) {
-    activeSenderLabel.textContent = senderId;
-    activeBanner.style.display = 'flex';
-    btnSubscribe.textContent = '🔄 Actualizar Suscripción';
-  }
+    // Eventos de probador individual
+    document.querySelectorAll('.btn-test-sender').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sender = btn.getAttribute('data-sender');
+        sendTestPushForSender(sender, btn);
+      });
+    });
 
-  function showUnsubscribedUI() {
-    activeBanner.style.display = 'none';
-    btnSubscribe.innerHTML = '<span>🔔</span> Activar Notificaciones en este Celular';
+    // Eventos de eliminación
+    document.querySelectorAll('.btn-remove-sender').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sender = btn.getAttribute('data-sender');
+        removeSender(sender);
+      });
+    });
   }
 
   // --------------------------------------------------------------------------
-  // 3. Proceso de Suscripción Web Push
+  // 4. Agregar / Eliminar Familiar
   // --------------------------------------------------------------------------
   subscribeForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const senderId = senderIdInput.value.trim();
     if (!senderId) return;
 
+    const currentList = getMonitoredSenders();
+    if (currentList.some(s => s.toLowerCase() === senderId.toLowerCase())) {
+      alert(`Ya estás monitoreando a "${senderId}".`);
+      senderIdInput.value = '';
+      return;
+    }
+
     try {
       btnSubscribe.disabled = true;
-      btnSubscribe.textContent = 'Obteniendo permisos...';
+      btnSubscribe.textContent = 'Solicitando permisos...';
 
-      // Solicitar permiso de Notificación
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
-        alert('Debes conceder permiso de notificaciones para poder recibir las alertas de emergencia.');
+        alert('Debes conceder permiso de notificaciones para poder recibir alertas.');
         btnSubscribe.disabled = false;
-        showUnsubscribedUI();
         return;
       }
 
       btnSubscribe.textContent = 'Conectando con el servidor...';
 
-      // Obtener llave pública VAPID
       const response = await fetch(`${apiBase}/vapid-public-key`);
       const data = await response.json();
       const applicationServerKey = urlBase64ToUint8Array(data.publicKey);
 
-      // Crear o recuperar suscripción Web Push
       let subscription = await swRegistration.pushManager.getSubscription();
       if (!subscription) {
         subscription = await swRegistration.pushManager.subscribe({
@@ -163,7 +216,6 @@
         });
       }
 
-      // Enviar al Backend
       const res = await fetch(`${apiBase}/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -176,50 +228,54 @@
       const resData = await res.json();
 
       if (resData.success) {
-        localStorage.setItem('nugon_active_sender', senderId);
-        showSubscribedUI(senderId);
-        updateStatus(true, `Conectado: ${senderId}`);
-        alert(`✅ ¡Notificaciones activadas! Ahora este celular sonará cuando ${senderId} emita una alerta.`);
+        const updatedList = [...currentList, senderId];
+        saveMonitoredSenders(updatedList);
+        senderIdInput.value = '';
+        alert(`✅ ¡Monitoreo activado para "${senderId}"!`);
       } else {
-        throw new Error(resData.error || 'Error al guardar la suscripción');
+        throw new Error(resData.error || 'Error al suscribir');
       }
 
     } catch (err) {
-      console.error('[App] Error al suscribirse:', err);
-      alert('❌ Error al configurar notificaciones: ' + err.message);
+      console.error('[App] Error al agregar familiar:', err);
+      alert('❌ Error al activar monitoreo: ' + err.message);
     } finally {
       btnSubscribe.disabled = false;
+      btnSubscribe.innerHTML = '<span>🔔</span> Activar Alerta para este Familiar';
     }
   });
 
-  // Desuscribir
-  btnUnsubscribe.addEventListener('click', async () => {
-    if (!confirm('¿Deseas dejar de recibir alertas de emergencia en este celular?')) return;
+  async function removeSender(senderId) {
+    if (!confirm(`¿Deseas dejar de recibir alertas para "${senderId}"?`)) return;
 
     try {
       const sub = await swRegistration.pushManager.getSubscription();
-      const senderId = localStorage.getItem('nugon_active_sender');
-      
       if (sub) {
         await fetch(`${apiBase}/unsubscribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint: sub.endpoint, sender_id: senderId })
         });
+      }
+
+      const currentList = getMonitoredSenders();
+      const updatedList = currentList.filter(s => s.toLowerCase() !== senderId.toLowerCase());
+      saveMonitoredSenders(updatedList);
+
+      // Si no quedan familiares, desuscribir del PushManager de forma limpia
+      if (updatedList.length === 0 && sub) {
         await sub.unsubscribe();
       }
 
-      localStorage.removeItem('nugon_active_sender');
-      showUnsubscribedUI();
-      updateStatus(false, 'Desconectado');
-      alert('Suscripción cancelada.');
+      alert(`Se ha dejado de monitorear a "${senderId}".`);
     } catch (err) {
       console.error(err);
+      alert('Error al quitar familiar: ' + err.message);
     }
-  });
+  }
 
   // --------------------------------------------------------------------------
-  // 4. Sirena de Audio (Web Audio API) y Alerta
+  // 5. Sirena de Audio y Pruebas
   // --------------------------------------------------------------------------
   function startEmergencySiren() {
     stopEmergencySiren();
@@ -284,16 +340,18 @@
     }, 4000);
   });
 
-  btnTestPush.addEventListener('click', async () => {
+  async function sendTestPushForSender(senderId, btnElement) {
     try {
       const sub = await swRegistration.pushManager.getSubscription();
-      const senderId = localStorage.getItem('nugon_active_sender') || 'Prueba';
       if (!sub) {
-        alert('Debes activar las notificaciones primero.');
+        alert('No hay suscripción Push activa.');
         return;
       }
-      btnTestPush.disabled = true;
-      btnTestPush.textContent = 'Enviando...';
+
+      if (btnElement) {
+        btnElement.disabled = true;
+        btnElement.textContent = 'Enviando...';
+      }
 
       await fetch(`${apiBase}/test-alert`, {
         method: 'POST',
@@ -301,17 +359,19 @@
         body: JSON.stringify({ sender_id: senderId, subscription: sub })
       });
 
-      alert('🔔 Notificación de prueba enviada. Debería sonar e indicarte la prueba.');
+      alert(`🔔 Notificación de prueba enviada para "${senderId}".`);
     } catch (e) {
       alert('Error en la prueba: ' + e.message);
     } finally {
-      btnTestPush.disabled = false;
-      btnTestPush.innerHTML = '<span>📲</span> Enviar Notificación de Prueba';
+      if (btnElement) {
+        btnElement.disabled = false;
+        btnElement.innerHTML = '<span>📲</span> Probar Alerta';
+      }
     }
-  });
+  }
 
   // --------------------------------------------------------------------------
-  // 5. Overlay de Emergencia en Pantalla Completa
+  // 6. Overlay de Emergencia en Pantalla Completa
   // --------------------------------------------------------------------------
   function triggerEmergencyOverlay(data) {
     startEmergencySiren();
@@ -344,12 +404,31 @@
   }
 
   // --------------------------------------------------------------------------
-  // 6. Historial de Alertas
+  // 7. Historial de Alertas y Filtro
   // --------------------------------------------------------------------------
+  function renderHistoryFilterOptions() {
+    if (!historyFilterSelect) return;
+    const list = getMonitoredSenders();
+
+    let html = '<option value="">Todos los familiares</option>';
+    list.forEach(sender => {
+      html += `<option value="${escapeHtml(sender)}">${escapeHtml(sender)}</option>`;
+    });
+
+    historyFilterSelect.innerHTML = html;
+  }
+
+  if (historyFilterSelect) {
+    historyFilterSelect.addEventListener('change', () => {
+      loadAlertHistory();
+    });
+  }
+
   async function loadAlertHistory() {
     if (!historyList) return;
-    const senderId = localStorage.getItem('nugon_active_sender');
-    const query = senderId ? `?sender_id=${encodeURIComponent(senderId)}` : '';
+
+    const filterSender = historyFilterSelect ? historyFilterSelect.value : '';
+    const query = filterSender ? `?sender_id=${encodeURIComponent(filterSender)}` : '';
 
     try {
       const res = await fetch(`${apiBase}/alerts${query}`);
@@ -389,7 +468,7 @@
   }
 
   // --------------------------------------------------------------------------
-  // 7. Navegación por Tabs
+  // 8. Navegación por Tabs
   // --------------------------------------------------------------------------
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {

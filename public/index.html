@@ -41,7 +41,7 @@
     <!-- Navigation Tabs -->
     <nav class="tabs-nav" aria-label="Secciones principales">
       <button class="tab-btn active" data-tab="tab-suscribir">
-        <span>🔔</span> Activar Alerta
+        <span>👥</span> Monitoreo (Familiares)
       </button>
       <button class="tab-btn" data-tab="tab-historial">
         <span>📋</span> Historial
@@ -51,61 +51,48 @@
       </button>
     </nav>
 
-    <!-- TAB 1: SUSCRIPCIÓN Y PRUEBAS -->
+    <!-- TAB 1: MONITOREO MULTI-FAMILIAR -->
     <section id="tab-suscribir" class="tab-panel active">
       
-      <!-- Card: Suscripción al Emisor -->
+      <!-- Card: Lista de Familiares Monitoreados -->
       <div class="card">
         <div class="card-header">
-          <h2 class="card-title"><span>🛡️</span> Monitorear un Familiar</h2>
-          <p class="card-desc">Ingresa el <strong>Identificador de Emisor (Sender ID)</strong> que configuraste en la aplicación Android de tu familiar.</p>
+          <h2 class="card-title"><span>🛡️</span> Familiares Monitoreados</h2>
+          <p class="card-desc">Este celular recibirá alertas inmediatas de los familiares registrados abajo.</p>
         </div>
 
-        <form id="subscribeForm">
+        <div id="monitoredList" class="monitored-grid">
+          <!-- Se completa dinámicamente con JS -->
+        </div>
+
+        <!-- Formulario para agregar un familiar -->
+        <form id="subscribeForm" style="margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1.25rem;">
           <div class="form-group">
-            <label for="senderIdInput" class="form-label">Identificador del Emisor (Sender ID):</label>
-            <input type="text" id="senderIdInput" class="form-control" placeholder="Ej: Prima Maria" required autocomplete="off">
-            <p class="form-hint">Debe coincidir exactamente con el nombre o código ingresado en la app Android.</p>
+            <label for="senderIdInput" class="form-label">➕ Agregar Familiar a Monitorear:</label>
+            <input type="text" id="senderIdInput" class="form-control" placeholder="Ej: Prima Maria, Abuelo Pedro" required autocomplete="off">
+            <p class="form-hint">Ingresa el mismo Sender ID que configuraste en la app Android de esa persona.</p>
           </div>
 
           <div class="btn-group">
             <button type="submit" id="btnSubscribe" class="btn btn-primary btn-lg">
-              <span>🔔</span> Activar Notificaciones en este Celular
+              <span>🔔</span> Activar Alerta para este Familiar
             </button>
           </div>
         </form>
       </div>
 
-      <!-- State Box when Subscribed -->
-      <div id="activeBanner" class="active-banner" style="display: none;">
-        <div class="active-banner-info">
-          <div class="active-banner-icon">✅</div>
-          <div>
-            <h3 style="font-size: 1.05rem; font-weight: 700; color: #34D399;">Alertas Activas</h3>
-            <p style="font-size: 0.875rem; color: #D1D5DB;">Recibirás notificaciones inmediatas para <strong id="activeSenderLabel">--</strong></p>
-          </div>
-        </div>
-        <button id="btnUnsubscribe" class="btn btn-outline-danger" style="width: auto; padding: 0.5rem 1rem;">
-          Desconectar
-        </button>
-      </div>
-
-      <!-- Card: Probador de Alertas y Sonido -->
+      <!-- Card: Probador Global de Alertas y Sirena -->
       <div class="card">
         <div class="card-header">
-          <h2 class="card-title"><span>🔊</span> Probar Sirena y Notificación</h2>
-          <p class="card-desc">Comprueba que la sirena de audio y la vibración funcionen correctamente en tu celular.</p>
+          <h2 class="card-title"><span>🔊</span> Probador de Alerta y Sirena</h2>
+          <p class="card-desc">Comprueba que la sirena de audio y la vibración funcionen en tu dispositivo.</p>
         </div>
 
-        <div class="btn-group" style="margin-bottom: 0.75rem;">
+        <div class="btn-group">
           <button id="btnTestSound" class="btn btn-secondary">
             <span>🔊</span> Probar Sonido de Sirena
           </button>
-          <button id="btnTestPush" class="btn btn-secondary">
-            <span>📲</span> Enviar Notificación de Prueba
-          </button>
         </div>
-        <p class="form-hint">Asegúrate de tener el volumen del celular alto y los permisos de notificaciones concedidos.</p>
       </div>
 
     </section>
@@ -113,9 +100,16 @@
     <!-- TAB 2: HISTORIAL DE ALERTAS -->
     <section id="tab-historial" class="tab-panel">
       <div class="card">
-        <div class="card-header">
-          <h2 class="card-title"><span>📋</span> Registro Reciente de Emergencias</h2>
-          <p class="card-desc">Historial de las últimas alertas enviadas por tu familiar.</p>
+        <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+          <div>
+            <h2 class="card-title"><span>📋</span> Registro de Emergencias</h2>
+            <p class="card-desc">Historial de las últimas alertas emitidas.</p>
+          </div>
+          <div>
+            <select id="historyFilterSelect" class="form-control" style="width: auto; padding: 0.4rem 0.85rem; font-size: 0.875rem;">
+              <option value="">Todos los familiares</option>
+            </select>
+          </div>
         </div>
 
         <div id="historyList" class="history-list">
@@ -131,7 +125,7 @@
       <div class="card">
         <div class="card-header">
           <h2 class="card-title"><span>📱</span> Cómo conectar con la App Android (Nugon SOS)</h2>
-          <p class="card-desc">Sigue estos pasos en el celular de la persona que necesita emitir la alerta.</p>
+          <p class="card-desc">Sigue estos pasos en el celular de cada persona que necesite emitir alertas.</p>
         </div>
 
         <div class="step-list">
@@ -139,7 +133,7 @@
             <div class="step-number">1</div>
             <div class="step-content">
               <div class="step-title">Instala la App Android</div>
-              <div class="step-text">Abre la app <strong>Nugon SOS</strong> en el teléfono Android del emisor.</div>
+              <div class="step-text">Abre la app <strong>Nugon SOS</strong> en el teléfono Android de tu familiar.</div>
             </div>
           </div>
 
