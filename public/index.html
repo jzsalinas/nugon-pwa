@@ -1,13 +1,11 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Nugon SOS - Alertas de Emergencia</title>
 
-  <meta name="description"
-    content="Recepción de alertas de auxilio y ubicación en tiempo real para familiares en situaciones de emergencia o convulsión.">
+  <meta name="description" content="Recepción de alertas de auxilio y ubicación en tiempo real para familiares en situaciones de emergencia o convulsión.">
   <meta name="theme-color" content="#DC2626">
 
   <!-- Open Graph -->
@@ -16,18 +14,18 @@
   <meta property="og:type" content="website">
 
   <!-- Favicon & PWA Manifest -->
-  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="icon" type="image/webp" href="logo.webp">
+  <link rel="alternate icon" type="image/png" href="logo-192.png">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
 
   <!-- Navigation Bar -->
   <header class="navbar">
     <div class="nav-container">
       <a href="./" class="brand">
-        <img src="logo.png" alt="Nugon SOS Logo" class="brand-logo">
+        <img src="logo.webp" alt="Nugon SOS Logo" class="brand-logo" width="42" height="42">
         <div class="brand-title">Nugon <span>SOS</span></div>
       </a>
       <div id="statusPill" class="status-pill">
@@ -55,20 +53,18 @@
 
     <!-- TAB 1: SUSCRIPCIÓN Y PRUEBAS -->
     <section id="tab-suscribir" class="tab-panel active">
-
+      
       <!-- Card: Suscripción al Emisor -->
       <div class="card">
         <div class="card-header">
           <h2 class="card-title"><span>🛡️</span> Monitorear un Familiar</h2>
-          <p class="card-desc">Ingresa el <strong>Identificador de Emisor (Sender ID)</strong> que configuraste en la
-            aplicación Android de tu familiar.</p>
+          <p class="card-desc">Ingresa el <strong>Identificador de Emisor (Sender ID)</strong> que configuraste en la aplicación Android de tu familiar.</p>
         </div>
 
         <form id="subscribeForm">
           <div class="form-group">
             <label for="senderIdInput" class="form-label">Identificador del Emisor (Sender ID):</label>
-            <input type="text" id="senderIdInput" class="form-control" placeholder="Ej: Prima Maria" required
-              autocomplete="off">
+            <input type="text" id="senderIdInput" class="form-control" placeholder="Ej: Prima Maria" required autocomplete="off">
             <p class="form-hint">Debe coincidir exactamente con el nombre o código ingresado en la app Android.</p>
           </div>
 
@@ -86,8 +82,7 @@
           <div class="active-banner-icon">✅</div>
           <div>
             <h3 style="font-size: 1.05rem; font-weight: 700; color: #34D399;">Alertas Activas</h3>
-            <p style="font-size: 0.875rem; color: #D1D5DB;">Recibirás notificaciones inmediatas para <strong
-                id="activeSenderLabel">--</strong></p>
+            <p style="font-size: 0.875rem; color: #D1D5DB;">Recibirás notificaciones inmediatas para <strong id="activeSenderLabel">--</strong></p>
           </div>
         </div>
         <button id="btnUnsubscribe" class="btn btn-outline-danger" style="width: auto; padding: 0.5rem 1rem;">
@@ -99,8 +94,7 @@
       <div class="card">
         <div class="card-header">
           <h2 class="card-title"><span>🔊</span> Probar Sirena y Notificación</h2>
-          <p class="card-desc">Comprueba que la sirena de audio y la vibración funcionen correctamente en tu celular.
-          </p>
+          <p class="card-desc">Comprueba que la sirena de audio y la vibración funcionen correctamente en tu celular.</p>
         </div>
 
         <div class="btn-group" style="margin-bottom: 0.75rem;">
@@ -111,8 +105,7 @@
             <span>📲</span> Enviar Notificación de Prueba
           </button>
         </div>
-        <p class="form-hint">Asegúrate de tener el volumen del celular alto y los permisos de notificaciones concedidos.
-        </p>
+        <p class="form-hint">Asegúrate de tener el volumen del celular alto y los permisos de notificaciones concedidos.</p>
       </div>
 
     </section>
@@ -133,7 +126,7 @@
 
     <!-- TAB 3: GUÍA E INSTRUCCIONES -->
     <section id="tab-instrucciones" class="tab-panel">
-
+      
       <!-- Configuración con Android App -->
       <div class="card">
         <div class="card-header">
@@ -156,8 +149,7 @@
               <div class="step-title">Configura el URL del Servidor y Sender ID</div>
               <div class="step-text">
                 En la pantalla de ajustes de la app Android, ingresa:
-                <br>• <strong>URL Servidor:</strong> <span id="serverUrlGuide"
-                  class="code-badge">https://prisma.com.py/nugon/api/alerta</span>
+                <br>• <strong>URL Servidor:</strong> <span id="serverUrlGuide" class="code-badge">https://prisma.com.py/nugon/api/alerta</span>
                 <br>• <strong>Tu Identificador / Sender ID:</strong> <span class="code-badge">Ej: Prima Maria</span>
               </div>
             </div>
@@ -167,8 +159,7 @@
             <div class="step-number">3</div>
             <div class="step-content">
               <div class="step-title">Concede Permiso de Accesibilidad</div>
-              <div class="step-text">Otorga los permisos requeridos para capturar la presión sostenida del botón de
-                volumen por 1.5 segundos.</div>
+              <div class="step-text">Otorga los permisos requeridos para capturar la presión sostenida del botón de volumen por 1.5 segundos.</div>
             </div>
           </div>
         </div>
@@ -178,8 +169,7 @@
       <div class="card">
         <div class="card-header">
           <h2 class="card-title"><span>🍏</span> Instalación en iPhone / iPad (iOS)</h2>
-          <p class="card-desc">Apple requiere instalar la aplicación en la Pantalla de Inicio para notificaciones Push.
-          </p>
+          <p class="card-desc">Apple requiere instalar la aplicación en la Pantalla de Inicio para notificaciones Push.</p>
         </div>
 
         <div class="step-list">
@@ -195,8 +185,7 @@
             <div class="step-number">2</div>
             <div class="step-content">
               <div class="step-title">Toca el botón Compartir</div>
-              <div class="step-text">Presiona el icono de <strong>Compartir</strong> (un cuadrado con una flecha hacia
-                arriba) en la barra inferior de Safari.</div>
+              <div class="step-text">Presiona el icono de <strong>Compartir</strong> (un cuadrado con una flecha hacia arriba) en la barra inferior de Safari.</div>
             </div>
           </div>
 
@@ -204,9 +193,7 @@
             <div class="step-number">3</div>
             <div class="step-content">
               <div class="step-title">Selecciona "Agregar a inicio"</div>
-              <div class="step-text">Selecciona <strong>Agregar a la pantalla de inicio</strong> y presiona
-                <strong>Agregar</strong>. Luego abre Nugon desde tu pantalla principal y activa las notificaciones.
-              </div>
+              <div class="step-text">Selecciona <strong>Agregar a la pantalla de inicio</strong> y presiona <strong>Agregar</strong>. Luego abre Nugon desde tu pantalla principal y activa las notificaciones.</div>
             </div>
           </div>
         </div>
@@ -238,11 +225,10 @@
   <!-- Footer -->
   <footer>
     <p>Nugon SOS &copy; 2026 - Aplicación Open Source bajo Licencia MIT</p>
-    <p style="margin-top: 0.25rem;">Diseñado para emergencias familiares.</p>
+    <p style="margin-top: 0.25rem;">Diseñado con amor y tecnología para emergencias familiares.</p>
   </footer>
 
   <!-- App Script -->
   <script src="app.js"></script>
 </body>
-
 </html>
