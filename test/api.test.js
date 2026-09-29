@@ -10,6 +10,7 @@ const {
   createApp,
   loadVapidConfiguration,
   normalizeTrustProxy,
+  resolveListenHost,
   resolveRateLimitSecret
 } = require('../server');
 
@@ -440,4 +441,12 @@ test('development puede usar fallback VAPID para rate limit', () => {
   assert.equal(resolveRateLimitSecret({
     environment: 'development', env: {}, developmentFallback: fallback
   }), fallback);
+});
+
+test('HOST usa loopback por defecto en producción y admite override explícito', () => {
+  assert.equal(resolveListenHost({ environment: 'production', env: {} }), '127.0.0.1');
+  assert.equal(resolveListenHost({ environment: 'development', env: {} }), '0.0.0.0');
+  assert.equal(resolveListenHost({
+    environment: 'production', env: { HOST: ' 10.20.30.40 ' }
+  }), '10.20.30.40');
 });

@@ -27,6 +27,8 @@ El pairing usa un código Crockford Base32 aleatorio de 12 caracteres, válido d
 - HTTPS en producción, normalmente terminado por un reverse proxy.
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` y un `RATE_LIMIT_SECRET` independiente, de al menos
   32 bytes, son obligatorios cuando `NODE_ENV=production`.
+- En producción, `HOST` usa `127.0.0.1` por defecto para que Node sólo acepte conexiones locales.
+  Puede definirse explícitamente; development/test conserva `0.0.0.0` cuando se omite.
 - En producción se confía por defecto sólo en `loopback`, apropiado para Nginx en el mismo host.
   Si el proxy conecta desde otra red, `TRUST_PROXY` debe contener su IP/CIDR exacto. Los valores
   indiscriminados `1`, `true`, `*` y `all` son rechazados.
@@ -118,10 +120,11 @@ tres secretos de producción, instalar dependencias y reiniciar el servicio:
 npm ci --omit=dev
 cp .env.example .env
 chmod 600 .env
-# completar NODE_ENV=production, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY y RATE_LIMIT_SECRET
+# completar HOST=127.0.0.1, PORT=3005, NODE_ENV=production,
+# VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY y RATE_LIMIT_SECRET
 ```
 
 Nginx debe terminar TLS para `nugon.prisma.com.py`, enviar todo el subdominio al puerto local de
-Node y establecer `X-Forwarded-Proto $scheme`. Con Nginx en el mismo host se utiliza
+Node en `127.0.0.1:3005` y establecer `X-Forwarded-Proto $scheme`. Con Nginx en el mismo host se utiliza
 `TRUST_PROXY=loopback`; para contenedores o redes separadas debe indicarse exclusivamente la IP o
 CIDR del proxy. Después de editar su configuración, validar con `nginx -t` antes de recargarlo.

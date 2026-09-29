@@ -123,6 +123,12 @@ function resolveRateLimitSecret({ environment, env = process.env, developmentFal
   throw new Error(`RATE_LIMIT_SECRET is required when NODE_ENV=${environment}`);
 }
 
+function resolveListenHost({ environment, env = process.env }) {
+  const configured = typeof env.HOST === 'string' ? env.HOST.trim() : '';
+  if (configured) return configured;
+  return environment === 'production' ? '127.0.0.1' : '0.0.0.0';
+}
+
 function createApp(options) {
   const {
     store,
@@ -481,6 +487,7 @@ async function main() {
   const port = Number(process.env.PORT || 3005);
   const environment = process.env.NODE_ENV || 'development';
   const production = environment === 'production';
+  const host = resolveListenHost({ environment });
   const dataDir = path.join(__dirname, 'data');
   const vapid = loadVapidConfiguration({ environment, dataDir });
   const rateLimitSecret = resolveRateLimitSecret({
@@ -502,8 +509,8 @@ async function main() {
     production,
     trustProxy: process.env.TRUST_PROXY || (production ? 'loopback' : false)
   });
-  app.listen(port, () => {
-    console.info(`Nugon server listening on port ${port}`);
+  app.listen(port, host, () => {
+    console.info(`Nugon server listening on ${host}:${port}`);
   });
 }
 
@@ -519,6 +526,7 @@ module.exports = {
   coordinatesFrom,
   loadVapidConfiguration,
   normalizeTrustProxy,
+  resolveListenHost,
   resolveRateLimitSecret,
   validSubscription
 };
