@@ -1,305 +1,524 @@
 const express = require('express');
-const cors = require('cors');
-const webpush = require('web-push');
 const fs = require('fs');
 const path = require('path');
+const webpush = require('web-push');
 require('dotenv').config();
 
-const app = express();
-const PORT = process.env.PORT || 3005;
-const BASE_PATH = (process.env.BASE_PATH || '/nugon').replace(/\/$/, '');
+const { JsonStore } = require('./lib/json-store');
+const {
+  bearerToken,
+  hmacSha256,
+  isValidDeviceId,
+  isValidPairingCode,
+  isValidSecret,
+  normalizePairingCode,
+  randomPairingCode,
+  randomToken,
+  safeHashEquals,
+  sha256
+} = require('./lib/security');
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+const PAIRING_TTL_MS = 10 * 60 * 1000;
+const PAIRING_ATTEMPTS = 5;
+const MAX_MESSAGE_LENGTH = 500;
+const MAX_SUBSCRIPTION_ENDPOINT_LENGTH = 2048;
 
-// Directorio de almacenamiento de datos
-const DATA_DIR = path.join(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+function onlyKeys(object, allowed, required = []) {
+  if (!object || typeof object !== 'object' || Array.isArray(object)) return false;
+  const keys = Object.keys(object);
+  return keys.every((key) => allowed.includes(key))
+    && required.every((key) => Object.prototype.hasOwnProperty.call(object, key));
 }
 
-const DB_FILE = path.join(DATA_DIR, 'database.json');
-const VAPID_KEYS_FILE = path.join(DATA_DIR, 'vapid.json');
-
-// Cargar o Inicializar VAPID Keys
-let vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
-let vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
-let vapidSubject = process.env.VAPID_SUBJECT || 'mailto:soporte@prisma.com.py';
-
-if (!vapidPublicKey || !vapidPrivateKey) {
-  if (fs.existsSync(VAPID_KEYS_FILE)) {
-    try {
-      const keys = JSON.parse(fs.readFileSync(VAPID_KEYS_FILE, 'utf8'));
-      vapidPublicKey = keys.publicKey;
-      vapidPrivateKey = keys.privateKey;
-    } catch (e) {
-      console.error('Error leyendo VAPID keys:', e);
-    }
+function validSubscription(subscription) {
+  if (!onlyKeys(subscription, ['endpoint', 'expirationTime', 'keys'], ['endpoint', 'keys'])) {
+    return false;
   }
-
-  if (!vapidPublicKey || !vapidPrivateKey) {
-    console.log('⚡ Generando nuevas llaves VAPID para Web Push...');
-    const vapidKeys = webpush.generateVAPIDKeys();
-    vapidPublicKey = vapidKeys.publicKey;
-    vapidPrivateKey = vapidKeys.privateKey;
-    fs.writeFileSync(VAPID_KEYS_FILE, JSON.stringify(vapidKeys, null, 2));
-    console.log('✅ Llaves VAPID generadas y guardadas en data/vapid.json');
-  }
-}
-
-webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
-
-// Inicializar Base de Datos Simple
-function loadDB() {
-  if (!fs.existsSync(DB_FILE)) {
-    const initialDB = { subscribers: [], alerts: [] };
-    fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
-    return initialDB;
-  }
+  if (typeof subscription.endpoint !== 'string'
+      || subscription.endpoint.length < 8
+      || subscription.endpoint.length > MAX_SUBSCRIPTION_ENDPOINT_LENGTH) return false;
   try {
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  } catch (err) {
-    console.error('Error cargando DB, reiniciando:', err);
-    return { subscribers: [], alerts: [] };
+    if (new URL(subscription.endpoint).protocol !== 'https:') return false;
+  } catch {
+    return false;
   }
+  if (subscription.expirationTime !== null
+      && subscription.expirationTime !== undefined
+      && (typeof subscription.expirationTime !== 'number'
+        || !Number.isFinite(subscription.expirationTime))) return false;
+  if (!onlyKeys(subscription.keys, ['p256dh', 'auth'], ['p256dh', 'auth'])) return false;
+  return typeof subscription.keys.p256dh === 'string'
+    && subscription.keys.p256dh.length >= 16
+    && subscription.keys.p256dh.length <= 512
+    && typeof subscription.keys.auth === 'string'
+    && subscription.keys.auth.length >= 8
+    && subscription.keys.auth.length <= 256;
 }
 
-function saveDB(db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+function coordinatesFrom(body) {
+  const latitudePresent = body.latitude !== undefined && body.latitude !== null;
+  const longitudePresent = body.longitude !== undefined && body.longitude !== null;
+  if (latitudePresent !== longitudePresent) return { valid: false };
+  if (!latitudePresent) return { valid: true, latitude: null, longitude: null };
+  if (typeof body.latitude !== 'number' || !Number.isFinite(body.latitude)
+      || body.latitude < -90 || body.latitude > 90
+      || typeof body.longitude !== 'number' || !Number.isFinite(body.longitude)
+      || body.longitude < -180 || body.longitude > 180) return { valid: false };
+  return { valid: true, latitude: body.latitude, longitude: body.longitude };
 }
 
-// Normalizar identificador emisor
-function normalizeSenderId(id) {
-  return (id || '').toString().trim().toLowerCase();
-}
-
-// Router API
-const apiRouter = express.Router();
-
-// 1. Obtener llave pública VAPID
-apiRouter.get('/vapid-public-key', (req, res) => {
-  res.json({ publicKey: vapidPublicKey, basePath: BASE_PATH });
-});
-
-// 2. Suscribir familiar a un Sender ID
-apiRouter.post('/subscribe', (req, res) => {
-  const { sender_id, subscription } = req.body;
-
-  if (!sender_id || !subscription || !subscription.endpoint) {
-    return res.status(400).json({ error: 'sender_id y subscription son requeridos.' });
-  }
-
-  const normId = normalizeSenderId(sender_id);
-  const db = loadDB();
-
-  const existingIndex = db.subscribers.findIndex(
-    sub => sub.endpoint === subscription.endpoint && normalizeSenderId(sub.sender_id) === normId
-  );
-
-  const subData = {
-    id: Date.now().toString(),
-    sender_id: sender_id.trim(),
-    norm_sender_id: normId,
-    endpoint: subscription.endpoint,
-    subscription: subscription,
-    created_at: new Date().toISOString()
-  };
-
-  if (existingIndex >= 0) {
-    db.subscribers[existingIndex] = subData;
-  } else {
-    db.subscribers.push(subData);
-  }
-
-  saveDB(db);
-  console.log(`📌 Nuevo familiar suscrito a [${sender_id.trim()}] (${db.subscribers.length} suscripciones totales)`);
-
-  res.status(201).json({ success: true, message: 'Suscripción registrada exitosamente.' });
-});
-
-// 3. Desuscribir
-apiRouter.post('/unsubscribe', (req, res) => {
-  const { endpoint, sender_id } = req.body;
-  if (!endpoint) {
-    return res.status(400).json({ error: 'endpoint es requerido.' });
-  }
-
-  const db = loadDB();
-  const initialLength = db.subscribers.length;
-  
-  if (sender_id) {
-    const normId = normalizeSenderId(sender_id);
-    db.subscribers = db.subscribers.filter(
-      sub => !(sub.endpoint === endpoint && normalizeSenderId(sub.sender_id) === normId)
-    );
-  } else {
-    db.subscribers = db.subscribers.filter(sub => sub.endpoint !== endpoint);
-  }
-
-  saveDB(db);
-  res.json({ success: true, removed: initialLength - db.subscribers.length });
-});
-
-// 4. Endpoint de Alerta (Llamado por la App Android o pruebas)
-apiRouter.post('/alerta', async (req, res) => {
-  const { sender_id, message, latitude, longitude } = req.body;
-
-  if (!sender_id) {
-    return res.status(400).json({ error: 'El campo sender_id es obligatorio.' });
-  }
-
-  const normId = normalizeSenderId(sender_id);
-  const db = loadDB();
-
-  const targetSubscribers = db.subscribers.filter(
-    sub => normalizeSenderId(sub.sender_id) === normId
-  );
-
-  const mapsUrl = (latitude && longitude)
-    ? `https://maps.google.com/?q=${latitude},${longitude}`
-    : null;
-
-  const alertRecord = {
-    id: 'alt_' + Date.now(),
-    sender_id: sender_id.trim(),
-    message: message || `¡ALERTA DE EMERGENCIA de ${sender_id}!`,
-    latitude: latitude || null,
-    longitude: longitude || null,
-    maps_url: mapsUrl,
-    timestamp: Date.now(),
-    created_at: new Date().toISOString(),
-    subscribers_notified: targetSubscribers.length
-  };
-
-  db.alerts.unshift(alertRecord);
-  if (db.alerts.length > 100) db.alerts = db.alerts.slice(0, 100);
-  saveDB(db);
-
-  console.log(`🚨 ¡ALERTA RECIBIDA DE [${sender_id}]! Notificando a ${targetSubscribers.length} familiares...`);
-
-  const payload = JSON.stringify({
-    title: `🚨 ¡ALERTA DE EMERGENCIA: ${sender_id}!`,
-    body: message || `¡Necesito ayuda urgente! Revisa mi ubicación.`,
-    sender_id: sender_id.trim(),
-    latitude: latitude,
-    longitude: longitude,
-    url: mapsUrl || `${BASE_PATH}/`,
-    timestamp: alertRecord.timestamp
-  });
-
-  const pushPromises = targetSubscribers.map(async (sub) => {
+function createRateLimiter({ max, windowMs, key, rateLimitSecret, store, now }) {
+  return async (request, response, next) => {
     try {
-      await webpush.sendNotification(sub.subscription, payload);
-      return { success: true, id: sub.id };
+      const currentTime = now();
+      const keyHash = hmacSha256(`nugon-rate-limit-v1:${key(request)}`, rateLimitSecret);
+      const outcome = await store.update((state) => {
+        state.rateLimits = state.rateLimits.filter((item) => item.resetAt > currentTime);
+        let bucket = state.rateLimits.find((item) => item.keyHash === keyHash);
+        if (!bucket) {
+          bucket = { keyHash, count: 0, resetAt: currentTime + windowMs };
+          state.rateLimits.push(bucket);
+        }
+        bucket.count += 1;
+        return { limited: bucket.count > max, resetAt: bucket.resetAt };
+      });
+      if (!outcome.limited) return next();
+      response.set('Retry-After', String(Math.max(
+        1, Math.ceil((outcome.resetAt - currentTime) / 1000))));
+      return response.status(429).json({ error: 'RATE_LIMITED' });
     } catch (error) {
-      console.error(`❌ Error enviando push a sub ${sub.id}:`, error.statusCode || error.message);
-      if (error.statusCode === 404 || error.statusCode === 410) {
-        return { remove: true, endpoint: sub.endpoint };
-      }
-      return { success: false, error: error.message };
+      return next(error);
     }
+  };
+}
+
+function normalizeTrustProxy(value) {
+  if (value === false || value === null || value === undefined || value === '') return false;
+  if (typeof value !== 'string') {
+    throw new Error('TRUST_PROXY must be an explicit proxy IP, CIDR or named range');
+  }
+  const normalized = value.trim();
+  if (!normalized) return false;
+  if (['1', 'true', '*', 'all'].includes(normalized.toLowerCase())) {
+    throw new Error('TRUST_PROXY must not trust an arbitrary first hop or every proxy');
+  }
+  return normalized;
+}
+
+function resolveRateLimitSecret({ environment, env = process.env, developmentFallback }) {
+  const configured = env.RATE_LIMIT_SECRET;
+  if (configured) {
+    if (Buffer.byteLength(configured) < 32) {
+      throw new Error('RATE_LIMIT_SECRET must contain at least 32 bytes');
+    }
+    return configured;
+  }
+  if (environment === 'development' || environment === 'test') {
+    if (typeof developmentFallback !== 'string'
+        || Buffer.byteLength(developmentFallback) < 32) {
+      throw new Error('A development rate limit secret of at least 32 bytes is required');
+    }
+    return developmentFallback;
+  }
+  throw new Error(`RATE_LIMIT_SECRET is required when NODE_ENV=${environment}`);
+}
+
+function createApp(options) {
+  const {
+    store,
+    pushService,
+    vapidPublicKey,
+    rateLimitSecret,
+    production = false,
+    trustProxy = false,
+    now = () => Date.now()
+  } = options;
+  if (typeof rateLimitSecret !== 'string' || Buffer.byteLength(rateLimitSecret) < 32) {
+    throw new Error('A rateLimitSecret of at least 32 bytes is required');
+  }
+  const app = express();
+  app.disable('x-powered-by');
+  const trustedProxy = normalizeTrustProxy(trustProxy);
+  if (trustedProxy) app.set('trust proxy', trustedProxy);
+
+  app.use((request, response, next) => {
+    if (production && !request.secure) {
+      return response.status(426).json({ error: 'HTTPS_REQUIRED' });
+    }
+    return next();
+  });
+  app.use((request, response, next) => {
+    response.set('Content-Security-Policy', [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "worker-src 'self'",
+      "manifest-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "frame-ancestors 'none'"
+    ].join('; '));
+    response.set('Referrer-Policy', 'no-referrer');
+    response.set('X-Content-Type-Options', 'nosniff');
+    if (production && request.secure) {
+      response.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
+  app.use(express.json({ limit: '16kb', strict: true }));
+
+  const registrationLimit = createRateLimiter({
+    max: 20,
+    windowMs: 15 * 60 * 1000,
+    key: (request) => `register:${request.ip}`,
+    rateLimitSecret,
+    store,
+    now
+  });
+  const claimLimit = createRateLimiter({
+    max: 20,
+    windowMs: 10 * 60 * 1000,
+    key: (request) => `claim:${request.ip}`,
+    rateLimitSecret,
+    store,
+    now
+  });
+  const deviceLimit = createRateLimiter({
+    max: 60,
+    windowMs: 60 * 1000,
+    key: (request) => `device:${request.params.deviceId || request.ip}`,
+    rateLimitSecret,
+    store,
+    now
+  });
+  const linkLimit = createRateLimiter({
+    max: 30,
+    windowMs: 10 * 60 * 1000,
+    key: (request) => `link:${request.ip}`,
+    rateLimitSecret,
+    store,
+    now
   });
 
-  const results = await Promise.all(pushPromises);
-  
-  const endpointsToRemove = results.filter(r => r.remove).map(r => r.endpoint);
-  if (endpointsToRemove.length > 0) {
-    const updatedDb = loadDB();
-    updatedDb.subscribers = updatedDb.subscribers.filter(sub => !endpointsToRemove.includes(sub.endpoint));
-    saveDB(updatedDb);
-    console.log(`🧹 Eliminadas ${endpointsToRemove.length} suscripciones expiradas.`);
+  async function authenticateDevice(request, response, next) {
+    const token = bearerToken(request);
+    const deviceId = request.params.deviceId;
+    if (!isValidDeviceId(deviceId) || !token) {
+      return response.status(401).json({ error: 'UNAUTHORIZED' });
+    }
+    const state = await store.read();
+    const device = state.devices.find((item) => item.deviceId === deviceId);
+    if (!device || !safeHashEquals(token, device.secretHash)) {
+      return response.status(401).json({ error: 'UNAUTHORIZED' });
+    }
+    request.authenticatedDevice = device;
+    return next();
   }
 
-  res.status(200).json({
-    success: true,
-    message: `Alerta procesada y notificaciones enviadas.`,
-    notified_count: targetSubscribers.length,
-    alert: alertRecord
-  });
-});
+  const asyncRoute = (handler) => (request, response, next) => {
+    Promise.resolve(handler(request, response, next)).catch(next);
+  };
 
-// 5. Alerta de prueba desde PWA
-apiRouter.post('/test-alert', async (req, res) => {
-  const { sender_id, subscription } = req.body;
-  if (!subscription) {
-    return res.status(400).json({ error: 'Subscription es requerida.' });
-  }
-
-  const payload = JSON.stringify({
-    title: `🔔 Prueba de Alerta Nugon SOS`,
-    body: `El sistema de notificaciones está configurado y funcionando correctamente para ${sender_id || 'tu dispositivo'}.`,
-    sender_id: sender_id || 'Prueba',
-    url: `${BASE_PATH}/`,
-    is_test: true,
-    timestamp: Date.now()
+  const api = express.Router();
+  api.use((request, response, next) => {
+    response.set('Cache-Control', 'no-store');
+    next();
   });
 
-  try {
-    await webpush.sendNotification(subscription, payload);
-    res.json({ success: true, message: 'Alerta de prueba enviada.' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  api.get('/v1/vapid-public-key', (request, response) => {
+    response.json({ publicKey: vapidPublicKey });
+  });
+
+  api.post('/v1/devices', registrationLimit, asyncRoute(async (request, response) => {
+    if (!onlyKeys(request.body, ['deviceId', 'deviceSecret'], ['deviceId', 'deviceSecret'])
+        || !isValidDeviceId(request.body.deviceId)
+        || !isValidSecret(request.body.deviceSecret)) {
+      return response.status(400).json({ error: 'INVALID_DEVICE_CREDENTIALS' });
+    }
+    const { deviceId, deviceSecret } = request.body;
+    const result = await store.update((state) => {
+      const existing = state.devices.find((item) => item.deviceId === deviceId);
+      if (existing) {
+        return { existing: true, authenticated: safeHashEquals(deviceSecret, existing.secretHash) };
+      }
+      const timestamp = new Date(now()).toISOString();
+      state.devices.push({
+        deviceId,
+        secretHash: sha256(deviceSecret),
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+      return { existing: false, authenticated: true };
+    });
+    if (!result.authenticated) {
+      return response.status(409).json({ error: 'DEVICE_ID_ALREADY_REGISTERED' });
+    }
+    return response.status(result.existing ? 200 : 201).json({
+      deviceId,
+      registered: !result.existing
+    });
+  }));
+
+  api.post('/v1/devices/:deviceId/pairings', deviceLimit, asyncRoute(authenticateDevice),
+    asyncRoute(async (request, response) => {
+      if (!onlyKeys(request.body, [])) {
+        return response.status(400).json({ error: 'INVALID_REQUEST' });
+      }
+      const code = randomPairingCode();
+      const normalizedCode = normalizePairingCode(code);
+      const expiresAt = now() + PAIRING_TTL_MS;
+      await store.update((state) => {
+        state.pairings = state.pairings.filter((item) => item.expiresAt > now());
+        state.pairings.push({
+          pairingHash: sha256(normalizedCode),
+          deviceId: request.params.deviceId,
+          createdAt: new Date(now()).toISOString(),
+          expiresAt,
+          attemptsRemaining: PAIRING_ATTEMPTS,
+          usedAt: null,
+          blocked: false
+        });
+      });
+      return response.status(201).json({ code, expiresAt });
+    }));
+
+  api.post('/v1/pairings/claim', claimLimit, asyncRoute(async (request, response) => {
+    if (!onlyKeys(request.body, ['code', 'subscription'], ['code', 'subscription'])
+        || !isValidPairingCode(request.body.code)) {
+      return response.status(400).json({ error: 'PAIRING_UNAVAILABLE' });
+    }
+    const pairingHash = sha256(normalizePairingCode(request.body.code));
+    const outcome = await store.update((state) => {
+      const pairingIndex = state.pairings.findIndex(
+        (item) => item.pairingHash === pairingHash);
+      if (pairingIndex < 0) return { unavailable: true };
+      const pairing = state.pairings[pairingIndex];
+      if (pairing.expiresAt <= now()) {
+        state.pairings.splice(pairingIndex, 1);
+        return { unavailable: true };
+      }
+      if (pairing.usedAt) return { unavailable: true };
+      if (pairing.blocked || pairing.attemptsRemaining <= 0) return { blocked: true };
+      pairing.attemptsRemaining -= 1;
+      if (!validSubscription(request.body.subscription)) {
+        if (pairing.attemptsRemaining <= 0) pairing.blocked = true;
+        return { invalid: true, blocked: pairing.blocked };
+      }
+
+      const linkSecret = randomToken(32);
+      const timestamp = new Date(now()).toISOString();
+      const existing = state.links.find((item) => item.deviceId === pairing.deviceId
+        && item.subscription.endpoint === request.body.subscription.endpoint);
+      const linkId = existing ? existing.linkId : `lnk_${randomToken(16)}`;
+      const link = {
+        linkId,
+        deviceId: pairing.deviceId,
+        secretHash: sha256(linkSecret),
+        subscription: request.body.subscription,
+        createdAt: existing ? existing.createdAt : timestamp,
+        updatedAt: timestamp
+      };
+      if (existing) Object.assign(existing, link);
+      else state.links.push(link);
+      pairing.usedAt = timestamp;
+      return { linkId, linkSecret };
+    });
+
+    if (outcome.unavailable || outcome.invalid || outcome.blocked) {
+      return response.status(400).json({ error: 'PAIRING_UNAVAILABLE' });
+    }
+    return response.status(201).json({
+      linkId: outcome.linkId,
+      linkSecret: outcome.linkSecret
+    });
+  }));
+
+  api.post('/v1/devices/:deviceId/alerts', deviceLimit, asyncRoute(authenticateDevice),
+    asyncRoute(async (request, response) => {
+      if (!onlyKeys(request.body, ['message', 'latitude', 'longitude'], ['message'])
+          || typeof request.body.message !== 'string'
+          || request.body.message.length < 1
+          || request.body.message.length > MAX_MESSAGE_LENGTH) {
+        return response.status(400).json({ error: 'INVALID_ALERT' });
+      }
+      const coordinates = coordinatesFrom(request.body);
+      if (!coordinates.valid) {
+        return response.status(400).json({ error: 'INVALID_COORDINATES' });
+      }
+
+      const state = await store.read();
+      const links = state.links.filter((item) => item.deviceId === request.params.deviceId);
+      const payload = {
+        title: '🚨 Alerta Nugon SOS',
+        body: request.body.message,
+        timestamp: now(),
+        url: '/'
+      };
+      if (coordinates.latitude !== null) {
+        payload.latitude = coordinates.latitude;
+        payload.longitude = coordinates.longitude;
+        payload.url = `https://maps.google.com/?q=${coordinates.latitude},${coordinates.longitude}`;
+      }
+
+      const expiredLinkIds = [];
+      const results = await Promise.all(links.map(async (link) => {
+        try {
+          await pushService.sendNotification(link.subscription, JSON.stringify(payload));
+          return true;
+        } catch (error) {
+          if (error && (error.statusCode === 404 || error.statusCode === 410)) {
+            expiredLinkIds.push(link.linkId);
+          }
+          return false;
+        }
+      }));
+      if (expiredLinkIds.length) {
+        await store.update((current) => {
+          current.links = current.links.filter((item) => !expiredLinkIds.includes(item.linkId));
+        });
+      }
+      const notifiedCount = results.filter(Boolean).length;
+      console.info(`Alert processed; linked=${links.length}, notified=${notifiedCount}`);
+      return response.json({ success: true, notifiedCount });
+    }));
+
+  api.get('/v1/devices/:deviceId/links', deviceLimit, asyncRoute(authenticateDevice),
+    asyncRoute(async (request, response) => {
+      const state = await store.read();
+      const links = state.links
+        .filter((item) => item.deviceId === request.params.deviceId)
+        .map((item) => ({ linkId: item.linkId, createdAt: item.createdAt }));
+      return response.json({ links });
+    }));
+
+  api.delete('/v1/devices/:deviceId/links', deviceLimit, asyncRoute(authenticateDevice),
+    asyncRoute(async (request, response) => {
+      const removed = await store.update((state) => {
+        const before = state.links.length;
+        state.links = state.links.filter((item) => item.deviceId !== request.params.deviceId);
+        return before - state.links.length;
+      });
+      return response.json({ success: true, removed });
+    }));
+
+  api.delete('/v1/links/:linkId', linkLimit, asyncRoute(async (request, response) => {
+    const token = bearerToken(request);
+    if (!token || typeof request.params.linkId !== 'string') {
+      return response.status(401).json({ error: 'UNAUTHORIZED' });
+    }
+    const removed = await store.update((state) => {
+      const link = state.links.find((item) => item.linkId === request.params.linkId);
+      if (!link || !safeHashEquals(token, link.secretHash)) return false;
+      state.links = state.links.filter((item) => item.linkId !== request.params.linkId);
+      return true;
+    });
+    if (!removed) return response.status(401).json({ error: 'UNAUTHORIZED' });
+    return response.json({ success: true });
+  }));
+
+  api.delete('/v1/devices/:deviceId', deviceLimit, asyncRoute(authenticateDevice),
+    asyncRoute(async (request, response) => {
+      await store.update((state) => {
+        state.devices = state.devices.filter((item) => item.deviceId !== request.params.deviceId);
+        state.links = state.links.filter((item) => item.deviceId !== request.params.deviceId);
+        state.pairings = state.pairings.filter((item) => item.deviceId !== request.params.deviceId);
+      });
+      return response.status(204).end();
+    }));
+
+  api.use((request, response) => response.status(404).json({ error: 'NOT_FOUND' }));
+  app.use('/api', api);
+
+  const staticDir = path.join(__dirname, 'public');
+  app.get('/sw.js', (request, response) => {
+    response.set('Service-Worker-Allowed', '/');
+    response.type('application/javascript');
+    response.sendFile(path.join(staticDir, 'sw.js'));
+  });
+  app.use('/', express.static(staticDir));
+
+  app.use((error, request, response, next) => {
+    if (error && (error.type === 'entity.too.large' || error instanceof SyntaxError)) {
+      return response.status(400).json({ error: 'INVALID_JSON' });
+    }
+    console.error(`Unhandled request error: ${error && error.name ? error.name : 'Error'}`);
+    return response.status(500).json({ error: 'INTERNAL_ERROR' });
+  });
+
+  return app;
+}
+
+function loadVapidConfiguration({ environment, dataDir, env = process.env }) {
+  const publicKey = env.VAPID_PUBLIC_KEY;
+  const privateKey = env.VAPID_PRIVATE_KEY;
+  if (Boolean(publicKey) !== Boolean(privateKey)) {
+    throw new Error('VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must both be configured');
   }
-});
-
-// 6. Obtener historial de alertas
-apiRouter.get('/alerts', (req, res) => {
-  const { sender_id } = req.query;
-  const db = loadDB();
-  if (sender_id) {
-    const normId = normalizeSenderId(sender_id);
-    const filtered = db.alerts.filter(a => normalizeSenderId(a.sender_id) === normId);
-    return res.json(filtered);
+  if (publicKey && privateKey) return { publicKey, privateKey };
+  if (environment !== 'development' && environment !== 'test') {
+    throw new Error(
+      `VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required when NODE_ENV=${environment}`);
   }
-  res.json(db.alerts.slice(0, 30));
-});
 
-// 7. Conteo de familiares suscritos
-apiRouter.get('/subscribers-count', (req, res) => {
-  const { sender_id } = req.query;
-  const db = loadDB();
-  if (sender_id) {
-    const normId = normalizeSenderId(sender_id);
-    const count = db.subscribers.filter(s => normalizeSenderId(s.sender_id) === normId).length;
-    return res.json({ sender_id, count });
+  const developmentFile = path.join(dataDir, 'vapid-development.json');
+  if (fs.existsSync(developmentFile)) {
+    const mode = fs.statSync(developmentFile).mode & 0o777;
+    if (mode !== 0o600) throw new Error('Development VAPID file must have mode 0600');
+    return JSON.parse(fs.readFileSync(developmentFile, 'utf8'));
   }
-  res.json({ total: db.subscribers.length });
-});
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const generated = webpush.generateVAPIDKeys();
+  fs.writeFileSync(developmentFile, `${JSON.stringify(generated, null, 2)}\n`, {
+    mode: 0o600,
+    flag: 'wx'
+  });
+  return generated;
+}
 
-// Montar API en rutas /api y /nugon/api
-app.use(`${BASE_PATH}/api`, apiRouter);
-app.use('/api', apiRouter);
+async function main() {
+  const port = Number(process.env.PORT || 3005);
+  const environment = process.env.NODE_ENV || 'development';
+  const production = environment === 'production';
+  const dataDir = path.join(__dirname, 'data');
+  const vapid = loadVapidConfiguration({ environment, dataDir });
+  const rateLimitSecret = resolveRateLimitSecret({
+    environment,
+    developmentFallback: vapid.privateKey
+  });
+  const store = new JsonStore(path.join(dataDir, 'state-v1.json'));
+  await store.initialize();
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:soporte@prisma.com.py',
+    vapid.publicKey,
+    vapid.privateKey
+  );
+  const app = createApp({
+    store,
+    pushService: webpush,
+    vapidPublicKey: vapid.publicKey,
+    rateLimitSecret,
+    production,
+    trustProxy: process.env.TRUST_PROXY || (production ? 'loopback' : false)
+  });
+  app.listen(port, () => {
+    console.info(`Nugon server listening on port ${port}`);
+  });
+}
 
-// Servir sw.js con cabecera de acotamiento de Service Worker
-app.get(['/nugon/sw.js', '/sw.js'], (req, res) => {
-  res.setHeader('Service-Worker-Allowed', '/nugon/');
-  res.setHeader('Content-Type', 'application/javascript');
-  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`Server startup failed: ${error.message || error.name || 'Error'}`);
+    process.exitCode = 1;
+  });
+}
 
-// Archivos Estáticos PWA
-const staticDir = path.join(__dirname, 'public');
-app.use(BASE_PATH, express.static(staticDir));
-app.use('/', express.static(staticDir));
-
-// Fallback SPA
-app.get(`${BASE_PATH}/*`, (req, res) => {
-  res.sendFile(path.join(staticDir, 'index.html'));
-});
-
-app.get('/*', (req, res) => {
-  res.sendFile(path.join(staticDir, 'index.html'));
-});
-
-// Iniciar servidor
-app.listen(PORT, () => {
-  console.log(`\n==================================================`);
-  console.log(`🚨 NUGON SOS PWA SERVER CORRIENDO EN PUERTO ${PORT}`);
-  console.log(`==================================================`);
-  console.log(`📍 Ruta Base Web PWA: http://localhost:${PORT}${BASE_PATH}/`);
-  console.log(`📍 Scope SW Acotado: ${BASE_PATH}/`);
-  console.log(`📍 Endpoint Android API: http://localhost:${PORT}${BASE_PATH}/api/alerta`);
-  console.log(`🔑 VAPID Public Key: ${vapidPublicKey}`);
-  console.log(`==================================================\n`);
-});
+module.exports = {
+  createApp,
+  coordinatesFrom,
+  loadVapidConfiguration,
+  normalizeTrustProxy,
+  resolveRateLimitSecret,
+  validSubscription
+};
