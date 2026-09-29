@@ -53,10 +53,11 @@ Disponible exclusivamente bajo `/api/v1` en el mismo origen que la PWA.
 | Método | Ruta | Autenticación | Uso |
 |---|---|---|---|
 | `POST` | `/devices` | Ninguna; credencial en el body inicial | Registro idempotente de instalación |
+| `PATCH` | `/devices/{deviceId}` | Bearer `deviceSecret` | Actualizar el alias visible del dispositivo |
 | `POST` | `/devices/{deviceId}/pairings` | Bearer `deviceSecret` | Crear código temporal |
 | `POST` | `/pairings/claim` | Código temporal | Vincular Web Push y emitir `linkSecret` |
 | `POST` | `/devices/{deviceId}/alerts` | Bearer `deviceSecret` | Enviar alerta efímera |
-| `GET` | `/devices/{deviceId}/links` | Bearer `deviceSecret` | Consultar IDs técnicos de vínculos |
+| `GET` | `/devices/{deviceId}/links` | Bearer `deviceSecret` | Consultar vínculos y estado no secreto de códigos temporales |
 | `DELETE` | `/devices/{deviceId}/links` | Bearer `deviceSecret` | Revocar todos los vínculos del dispositivo |
 | `DELETE` | `/links/{linkId}` | Bearer `linkSecret` | Desvincular la PWA actual |
 | `DELETE` | `/devices/{deviceId}` | Bearer `deviceSecret` | Eliminar dispositivo y vínculos |
@@ -68,7 +69,7 @@ Los endpoints legacy `/alerts`, `/subscribers-count`, `/subscribe`, `/unsubscrib
 
 `data/state-v1.json`, con escritura serializada y reemplazo atómico, contiene exclusivamente:
 
-- `deviceId`, hash SHA-256 de `deviceSecret` y fechas técnicas;
+- `deviceId`, hash SHA-256 de `deviceSecret`, `displayName` opcional y fechas técnicas;
 - Web Push subscription, `linkId`, relación con `deviceId`, hash de `linkSecret` y fechas técnicas;
 - hash temporal del código de pairing, expiración, intentos restantes y estado de uso/bloqueo.
 - hash opaco de la clave de rate limit, contador y expiración.
@@ -80,6 +81,8 @@ clave VAPID local. No se guardan IP ni identificadores en claro. En cada operaci
 purgan y persisten las entradas vencidas.
 
 Nunca se persisten mensajes, coordenadas, URLs de Maps, números telefónicos, payloads de alerta ni datos de accesibilidad.
+`displayName` es únicamente una etiqueta humana de hasta 40 caracteres: no participa en
+autenticación, autorización, búsquedas de seguridad ni códigos de pairing.
 
 ## Migración desde Sender ID
 

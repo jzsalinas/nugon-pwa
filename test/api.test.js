@@ -124,6 +124,67 @@ test('registro válido guarda sólo el hash del secreto', async () => {
   assert.equal(state.devices[0].secretHash.length, 64);
 });
 
+test('registro acepta alias, lo normaliza y lo persiste separado de la credencial', async () => {
+  const device = { ...credentials(), displayName: '  María  ' };
+  const result = await api('/api/v1/devices', { method: 'POST', body: device });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.body.displayName, 'María');
+  const state = await fixture.store.read();
+  assert.equal(state.devices[0].displayName, 'María');
+  assert.notEqual(state.devices[0].secretHash, device.deviceSecret);
+});
+
+test('actualización de alias requiere autenticación y conserva el secreto', async () => {
+  const device = await register();
+  const secretHash = (await fixture.store.read()).devices[0].secretHash;
+  const result = await api(`/api/v1/devices/${device.deviceId}`, {
+    method: 'PATCH',
+    headers: auth(device.deviceSecret),
+    body: { displayName: '  Marta  ' }
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.body.displayName, 'Marta');
+  const stored = (await fixture.store.read()).devices[0];
+  assert.equal(stored.displayName, 'Marta');
+  assert.equal(stored.secretHash, secretHash);
+});
+
+test('actualización de alias sin autenticación es rechazada', async () => {
+  const device = await register();
+  const result = await api(`/api/v1/devices/${device.deviceId}`, {
+    method: 'PATCH',
+    body: { displayName: 'Intruso' }
+  });
+  assert.equal(result.response.status, 401);
+  assert.equal((await fixture.store.read()).devices[0].displayName, null);
+});
+
+test('alias de tipo o longitud inválidos o con caracteres de control es rechazado', async () => {
+  const device = await register();
+  for (const displayName of [42, 'A'.repeat(41), 'María\nAlerta']) {
+    const result = await api(`/api/v1/devices/${device.deviceId}`, {
+      method: 'PATCH',
+      headers: auth(device.deviceSecret),
+      body: { displayName }
+    });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error, 'INVALID_DISPLAY_NAME');
+  }
+});
+
+test('alias vacío o compuesto sólo por espacios es rechazado', async () => {
+  const device = await register();
+  for (const displayName of ['', '   ']) {
+    const result = await api(`/api/v1/devices/${device.deviceId}`, {
+      method: 'PATCH',
+      headers: auth(device.deviceSecret),
+      body: { displayName }
+    });
+    assert.equal(result.response.status, 400);
+    assert.equal(result.body.error, 'INVALID_DISPLAY_NAME');
+  }
+});
+
 test('rate limit persiste sólo clave opaca, contador y expiración', async () => {
   await register();
   const state = await fixture.store.read();
@@ -201,6 +262,61 @@ test('pairing es de un solo uso', async () => {
   assert.equal((await claim(pairing.code)).response.status, 400);
 });
 
+test('estado autenticado informa vínculos y uso del pairing sin revelar el código', async () => {
+  const device = await register();
+  const pairing = await createPairing(device);
+  const active = await api(`/api/v1/devices/${device.deviceId}/links`, {
+    headers: auth(device.deviceSecret)
+  });
+  assert.equal(active.response.status, 200);
+  assert.equal(active.body.links.length, 0);
+  assert.deepEqual(active.body.pairingStatuses, [{
+    expiresAt: pairing.expiresAt,
+    status: 'active'
+  }]);
+  assert.equal(JSON.stringify(active.body).includes(pairing.code), false);
+
+  await claim(pairing.code);
+  const used = await api(`/api/v1/devices/${device.deviceId}/links`, {
+    headers: auth(device.deviceSecret)
+  });
+  assert.equal(used.response.status, 200);
+  assert.equal(used.body.links.length, 1);
+  assert.deepEqual(used.body.pairingStatuses, [{
+    expiresAt: pairing.expiresAt,
+    status: 'used'
+  }]);
+});
+
+test('consulta de vínculos exige autenticación', async () => {
+  const device = await register();
+  const result = await api(`/api/v1/devices/${device.deviceId}/links`);
+  assert.equal(result.response.status, 401);
+});
+
+test('consulta de estado purga pairings vencidos', async () => {
+  const device = await register();
+  await createPairing(device);
+  fixture.advance(10 * 60 * 1000 + 1);
+  const result = await api(`/api/v1/devices/${device.deviceId}/links`, {
+    headers: auth(device.deviceSecret)
+  });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.pairingStatuses, []);
+  assert.equal((await fixture.store.read()).pairings.length, 0);
+});
+
+test('registro idempotente tras una actualización conserva vínculos existentes', async () => {
+  const device = await register();
+  const pairing = await createPairing(device);
+  const linked = await claim(pairing.code);
+  const duplicate = await api('/api/v1/devices', { method: 'POST', body: device });
+  assert.equal(duplicate.response.status, 200);
+  const state = await fixture.store.read();
+  assert.equal(state.links.length, 1);
+  assert.equal(state.links[0].linkId, linked.body.linkId);
+});
+
 test('pairing se bloquea tras intentos excesivos', async () => {
   const device = await register();
   const pairing = await createPairing(device);
@@ -224,6 +340,62 @@ test('claim válido crea un vínculo y devuelve credencial revocable', async () 
   const state = await fixture.store.read();
   assert.equal(state.links.length, 1);
   assert.notEqual(state.links[0].secretHash, result.body.linkSecret);
+});
+
+test('claim devuelve el alias actual del dispositivo', async () => {
+  const device = await register({ ...credentials(), displayName: 'María' });
+  const pairing = await createPairing(device);
+  const result = await claim(pairing.code);
+  assert.equal(result.response.status, 201);
+  assert.equal(result.body.displayName, 'María');
+});
+
+test('Web Push identifica al emisor por su alias', async () => {
+  const device = await register({ ...credentials(), displayName: 'María' });
+  const pairing = await createPairing(device);
+  await claim(pairing.code);
+  await api(`/api/v1/devices/${device.deviceId}/alerts`, {
+    method: 'POST',
+    headers: auth(device.deviceSecret),
+    body: { message: 'Ayuda' }
+  });
+  assert.equal(fixture.pushes[0].payload.title, 'Alerta de María');
+});
+
+test('cambiar el alias conserva los vínculos y las alertas siguientes usan el nuevo', async () => {
+  const device = await register({ ...credentials(), displayName: 'María' });
+  const pairing = await createPairing(device);
+  const linked = await claim(pairing.code);
+  const before = (await fixture.store.read()).links[0];
+  const updated = await api(`/api/v1/devices/${device.deviceId}`, {
+    method: 'PATCH',
+    headers: auth(device.deviceSecret),
+    body: { displayName: 'Ana' }
+  });
+  assert.equal(updated.response.status, 200);
+  const after = (await fixture.store.read()).links[0];
+  assert.equal(after.linkId, linked.body.linkId);
+  assert.equal(after.secretHash, before.secretHash);
+  const alert = await api(`/api/v1/devices/${device.deviceId}/alerts`, {
+    method: 'POST',
+    headers: auth(device.deviceSecret),
+    body: { message: 'Ayuda' }
+  });
+  assert.equal(alert.response.status, 200);
+  assert.equal(fixture.pushes[0].payload.title, 'Alerta de Ana');
+});
+
+test('dispositivo sin alias usa fallbacks neutros en pairing y Web Push', async () => {
+  const device = await register();
+  const pairing = await createPairing(device);
+  const linked = await claim(pairing.code);
+  assert.equal(linked.body.displayName, 'Dispositivo Nugon');
+  await api(`/api/v1/devices/${device.deviceId}/alerts`, {
+    method: 'POST',
+    headers: auth(device.deviceSecret),
+    body: { message: 'Ayuda' }
+  });
+  assert.equal(fixture.pushes[0].payload.title, 'Alerta Nugon');
 });
 
 test('alerta sin autenticación es rechazada', async () => {
@@ -344,7 +516,14 @@ test('PWA, manifest, Service Worker y API se sirven desde la raíz oficial', asy
   const workerResponse = await fetch(`${fixture.baseUrl}/sw.js`);
   assert.equal(workerResponse.status, 200);
   assert.equal(workerResponse.headers.get('service-worker-allowed'), '/');
-  assert.equal((await workerResponse.text()).includes('/nugon'), false);
+  const workerSource = await workerResponse.text();
+  assert.equal(workerSource.includes('/nugon'), false);
+  assert.match(workerSource, /title: 'Alerta Nugon'/);
+
+  const appResponse = await fetch(`${fixture.baseUrl}/app.js`);
+  const appSource = await appResponse.text();
+  assert.match(appSource, /link\.displayName \|\| 'Dispositivo Nugon'/);
+  assert.match(appSource, /displayName: result\.displayName/);
 
   const apiResponse = await api('/api/v1/vapid-public-key');
   assert.equal(apiResponse.response.status, 200);

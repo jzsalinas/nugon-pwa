@@ -6,7 +6,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('push', (event) => {
   let data = {
-    title: '🚨 Alerta Nugon SOS',
+    title: 'Alerta Nugon',
     body: 'Se solicitó ayuda mediante Nugon SOS.',
     timestamp: Date.now(),
     url: '/'

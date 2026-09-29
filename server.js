@@ -20,8 +20,11 @@ const {
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const PAIRING_ATTEMPTS = 5;
+const MAX_DISPLAY_NAME_LENGTH = 40;
 const MAX_MESSAGE_LENGTH = 500;
 const MAX_SUBSCRIPTION_ENDPOINT_LENGTH = 2048;
+const DISPLAY_NAME_FALLBACK = 'Dispositivo Nugon';
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
 function onlyKeys(object, allowed, required = []) {
   if (!object || typeof object !== 'object' || Array.isArray(object)) return false;
@@ -65,6 +68,18 @@ function coordinatesFrom(body) {
       || typeof body.longitude !== 'number' || !Number.isFinite(body.longitude)
       || body.longitude < -180 || body.longitude > 180) return { valid: false };
   return { valid: true, latitude: body.latitude, longitude: body.longitude };
+}
+
+function normalizeDisplayName(value, { allowNull = false } = {}) {
+  if (value === null && allowNull) return { valid: true, value: null };
+  if (typeof value !== 'string' || CONTROL_CHARACTERS.test(value)) {
+    return { valid: false };
+  }
+  const normalized = value.trim();
+  if (!normalized || [...normalized].length > MAX_DISPLAY_NAME_LENGTH) {
+    return { valid: false };
+  }
+  return { valid: true, value: normalized };
 }
 
 function createRateLimiter({ max, windowMs, key, rateLimitSecret, store, now }) {
@@ -238,34 +253,71 @@ function createApp(options) {
   });
 
   api.post('/v1/devices', registrationLimit, asyncRoute(async (request, response) => {
-    if (!onlyKeys(request.body, ['deviceId', 'deviceSecret'], ['deviceId', 'deviceSecret'])
+    if (!onlyKeys(request.body, ['deviceId', 'deviceSecret', 'displayName'],
+      ['deviceId', 'deviceSecret'])
         || !isValidDeviceId(request.body.deviceId)
         || !isValidSecret(request.body.deviceSecret)) {
       return response.status(400).json({ error: 'INVALID_DEVICE_CREDENTIALS' });
+    }
+    const displayNamePresent = Object.prototype.hasOwnProperty.call(
+      request.body, 'displayName');
+    const displayName = displayNamePresent
+      ? normalizeDisplayName(request.body.displayName, { allowNull: true })
+      : { valid: true, value: null };
+    if (!displayName.valid) {
+      return response.status(400).json({ error: 'INVALID_DISPLAY_NAME' });
     }
     const { deviceId, deviceSecret } = request.body;
     const result = await store.update((state) => {
       const existing = state.devices.find((item) => item.deviceId === deviceId);
       if (existing) {
-        return { existing: true, authenticated: safeHashEquals(deviceSecret, existing.secretHash) };
+        const authenticated = safeHashEquals(deviceSecret, existing.secretHash);
+        return {
+          existing: true,
+          authenticated,
+          displayName: existing.displayName || null
+        };
       }
       const timestamp = new Date(now()).toISOString();
       state.devices.push({
         deviceId,
         secretHash: sha256(deviceSecret),
+        displayName: displayName.value,
         createdAt: timestamp,
         updatedAt: timestamp
       });
-      return { existing: false, authenticated: true };
+      return { existing: false, authenticated: true, displayName: displayName.value };
     });
     if (!result.authenticated) {
       return response.status(409).json({ error: 'DEVICE_ID_ALREADY_REGISTERED' });
     }
     return response.status(result.existing ? 200 : 201).json({
       deviceId,
+      displayName: result.displayName,
       registered: !result.existing
     });
   }));
+
+  api.patch('/v1/devices/:deviceId', deviceLimit, asyncRoute(authenticateDevice),
+    asyncRoute(async (request, response) => {
+      if (!onlyKeys(request.body, ['displayName'], ['displayName'])) {
+        return response.status(400).json({ error: 'INVALID_DISPLAY_NAME' });
+      }
+      const displayName = normalizeDisplayName(request.body.displayName, { allowNull: true });
+      if (!displayName.valid) {
+        return response.status(400).json({ error: 'INVALID_DISPLAY_NAME' });
+      }
+      await store.update((state) => {
+        const device = state.devices.find(
+          (item) => item.deviceId === request.params.deviceId);
+        device.displayName = displayName.value;
+        device.updatedAt = new Date(now()).toISOString();
+      });
+      return response.json({
+        deviceId: request.params.deviceId,
+        displayName: displayName.value
+      });
+    }));
 
   api.post('/v1/devices/:deviceId/pairings', deviceLimit, asyncRoute(authenticateDevice),
     asyncRoute(async (request, response) => {
@@ -313,6 +365,9 @@ function createApp(options) {
         return { invalid: true, blocked: pairing.blocked };
       }
 
+      const device = state.devices.find((item) => item.deviceId === pairing.deviceId);
+      if (!device) return { unavailable: true };
+
       const linkSecret = randomToken(32);
       const timestamp = new Date(now()).toISOString();
       const existing = state.links.find((item) => item.deviceId === pairing.deviceId
@@ -329,7 +384,11 @@ function createApp(options) {
       if (existing) Object.assign(existing, link);
       else state.links.push(link);
       pairing.usedAt = timestamp;
-      return { linkId, linkSecret };
+      return {
+        linkId,
+        linkSecret,
+        displayName: device.displayName || DISPLAY_NAME_FALLBACK
+      };
     });
 
     if (outcome.unavailable || outcome.invalid || outcome.blocked) {
@@ -337,7 +396,8 @@ function createApp(options) {
     }
     return response.status(201).json({
       linkId: outcome.linkId,
-      linkSecret: outcome.linkSecret
+      linkSecret: outcome.linkSecret,
+      displayName: outcome.displayName
     });
   }));
 
@@ -355,9 +415,12 @@ function createApp(options) {
       }
 
       const state = await store.read();
+      const device = state.devices.find((item) => item.deviceId === request.params.deviceId);
       const links = state.links.filter((item) => item.deviceId === request.params.deviceId);
       const payload = {
-        title: '🚨 Alerta Nugon SOS',
+        title: device && device.displayName
+          ? `Alerta de ${device.displayName}`
+          : 'Alerta Nugon',
         body: request.body.message,
         timestamp: now(),
         url: '/'
@@ -392,11 +455,20 @@ function createApp(options) {
 
   api.get('/v1/devices/:deviceId/links', deviceLimit, asyncRoute(authenticateDevice),
     asyncRoute(async (request, response) => {
-      const state = await store.read();
-      const links = state.links
-        .filter((item) => item.deviceId === request.params.deviceId)
-        .map((item) => ({ linkId: item.linkId, createdAt: item.createdAt }));
-      return response.json({ links });
+      const status = await store.update((state) => {
+        state.pairings = state.pairings.filter((item) => item.expiresAt > now());
+        const links = state.links
+          .filter((item) => item.deviceId === request.params.deviceId)
+          .map((item) => ({ linkId: item.linkId, createdAt: item.createdAt }));
+        const pairingStatuses = state.pairings
+          .filter((item) => item.deviceId === request.params.deviceId)
+          .map((item) => ({
+            expiresAt: item.expiresAt,
+            status: item.usedAt ? 'used' : (item.blocked ? 'blocked' : 'active')
+          }));
+        return { links, pairingStatuses };
+      });
+      return response.json(status);
     }));
 
   api.delete('/v1/devices/:deviceId/links', deviceLimit, asyncRoute(authenticateDevice),
@@ -525,6 +597,7 @@ module.exports = {
   createApp,
   coordinatesFrom,
   loadVapidConfiguration,
+  normalizeDisplayName,
   normalizeTrustProxy,
   resolveListenHost,
   resolveRateLimitSecret,

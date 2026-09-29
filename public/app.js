@@ -14,6 +14,7 @@
   const pairingResult = document.getElementById('pairingResult');
   const linksList = document.getElementById('linksList');
   const alertOverlay = document.getElementById('alertOverlay');
+  const alertTitle = document.getElementById('alertTitle');
   const alertBody = document.getElementById('alertBody');
   const alertTime = document.getElementById('alertTime');
   const openMapsButton = document.getElementById('openMapsButton');
@@ -73,12 +74,12 @@
       return;
     }
 
-    links.forEach((link, index) => {
+    links.forEach((link) => {
       const row = document.createElement('div');
       row.className = 'link-row';
       const details = document.createElement('div');
       const title = document.createElement('strong');
-      title.textContent = `Dispositivo vinculado ${index + 1}`;
+      title.textContent = link.displayName || 'Dispositivo Nugon';
       const date = document.createElement('span');
       date.textContent = link.linkedAt
         ? `Desde ${new Date(link.linkedAt).toLocaleDateString()}`
@@ -190,6 +191,7 @@
       links.push({
         linkId: result.linkId,
         linkSecret: result.linkSecret,
+        displayName: result.displayName || 'Dispositivo Nugon',
         linkedAt: new Date().toISOString()
       });
       writeLinks(links);
@@ -261,6 +263,7 @@
   }
 
   function showAlert(data) {
+    alertTitle.textContent = data.title || 'Alerta Nugon';
     alertBody.textContent = data.body || 'Se solicitó ayuda mediante Nugon SOS.';
     alertTime.textContent = new Date(data.timestamp || Date.now()).toLocaleString();
     const hasCoordinates = typeof data.latitude === 'number' && typeof data.longitude === 'number';
